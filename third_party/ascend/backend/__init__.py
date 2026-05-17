@@ -51,4 +51,11 @@ def _apply_ascend_patch():
         CodeGenerator._ascend_patch_applied = True
 
 
+# Remote execution: opt-in via TRITON_REMOTE_NPU=host:port. Imported here
+# (not lazily) so the driver swap happens before any code path triggers
+# instantiation of NPUDriver (which requires CANN on this host).
+from .remote.activation import maybe_enable_remote_mode as _maybe_enable_remote_mode
+_maybe_enable_remote_mode()
+
+
 __all__ = ["do_bench_npu"]
