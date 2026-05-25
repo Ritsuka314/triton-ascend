@@ -28,7 +28,7 @@ triton.language.store(
 | `value`       | `tensor` 或 `scalar`  | 要存储的值，支持隐式广播和隐式类型转换  |
 | `mask`       | `int1`或`tensor<int1>`    | 可选参数，当且仅当`pointer` 不来源于`tl.make_block_ptr`时可传入<br>若`mask[i]==False` ，则不会将`value[i]`存储到`pointer[i]`指向的地址,是`True`则正常存储 <br>若`pointer`来源于`tl.make_block_ptr`，则`mask`必须是`None`                                        |
 | `boundary_check` | `tuple(int)` | 可选参数，当且仅当`pointer`来源于`tl.make_block_ptr`时可传入<br>整数元组，指示需要做边界检查的维度                                         |
-| `cache_modifier`   | `""` 或 `"ca"`或`"cg"`                | 可选参数，控制NVIDIA PTX上的cache选项，对Ascend硬件无效                                                |
+| `cache_modifier`   | `""` 或 `"cg"`或`"wb"`或`"cs"`或`"wt"` | 可选参数，控制cache 行为。Ascend A5 SIMT-only 模式下支持：`""`/`"wb"` → 走 cache（CA），`"cg"`/`"cs"`/`"wt"` → 绕过 cache（NCA）。**硬件粒度仅 cache / uncache 两级**，不实现 Triton 上游全部细分（.wb/.cg/.cs/.wt）。全局内存生效；共享内存忽略（硬件不支持）。A2/A3 / 非 SIMT-only 模式对硬件无效。 |
 | `eviction_policy`   | `str`                | 控制NVIDIA PTX的eviction策略， 对Ascend硬件无效                                                |
 | `_semantic`   | -                 | 保留参数，暂不支持外部调用                                                |
 
@@ -44,7 +44,7 @@ triton.language.store(
 | Ascend A2/A3 | √    | √     | √     | ×     | ×      | ×      | ×      | √     | √    | √    | ×    | √    |  √    |
 
 结论：Ascend 对比 GPU 缺失uint8、uint16、uint32、uint64、fp64的支持能力（硬件限制）。
-专家意见：eviction_policy和cache_modifier参见load
+专家意见：eviction_policy 与 cache_modifier 详见 `tl.load.md`；Ascend A5 SIMT-only 模式下 `cache_modifier` 已支持（cache / uncache 两级），`eviction_policy` 整体不支持。
 
 #### 2.2.2 Shape 支持
 
@@ -72,7 +72,7 @@ triton.language.store(
 
 > 相对社区能力缺失且无法实现
 
-Ascend 对比 GPU 缺失uint8、uint16、uint32、uint64、fp64的支持能力（硬件限制）, eviction_policy和cache_modifier在NPU上功能还不完善。
+Ascend 对比 GPU 缺失uint8、uint16、uint32、uint64、fp64的支持能力（硬件限制）。`cache_modifier` 在 A5 SIMT-only 模式下已支持 cache / uncache 两级映射；`eviction_policy` 整体不支持。
 
 | 差异点                                 | 描述                                                         | 解决途径                       |
 | -------------------------------------- | ------------------------------------------------------------ | ------------------------------ |

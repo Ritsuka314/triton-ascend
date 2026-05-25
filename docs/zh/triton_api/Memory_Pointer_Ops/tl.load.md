@@ -31,12 +31,12 @@ triton.language.load(
 | `other`     | `tensor` 或`scalar`   | 可选参数，当且仅当`mask!=None`时可传入<br> 若`mask[i]==False` ，将返回值的第`i`个位置设置为`other[i]`或`other`（若`other`是`scalar`类型）, 需要支持tensor，因为tritonGPU社区上是tensor和scalar都支持的，other[]] = mask[i]|
 | `boundary_check` | `tuple(int)` | 可选参数，当且仅当`pointer`来源于`tl.make_block_ptr`时可传入<br>整数元组，指示需要做边界检查的维度                                         |
 | `padding_option`   | `""`或`"zero"`或`"nan"`               | 可选参数，当且仅当`boundary_check`不为空时可传入<br>表示访问越界时填充的值 |
-| `cache_modifier`   | `""` 或 `"ca"`或`"cg"`                | 可选参数，控制NVIDIA PTX上的cache选项，对Ascend硬件无效                                                |
+| `cache_modifier`   | `""` 或 `"ca"`或`"cg"`或`"cv"`        | 可选参数，控制cache 行为。Ascend A5 SIMT-only 模式下支持：`""`/`"ca"` → 走 cache（CA），`"cg"`/`"cv"` → 绕过 cache（NCA）。**硬件粒度仅 cache / uncache 两级**，不实现 Triton 上游全部细分（.ca/.cg/.cv）。全局内存生效；共享内存忽略（硬件不支持）。A2/A3 / 非 SIMT-only 模式对硬件无效。 |
 | `eviction_policy`   | `str`                | 控制NVIDIA PTX的eviction策略， 对Ascend硬件无效                                                |
-| `volatile`   | `str`                 | 控制NVIDIA PTX的volatile选项， 对Ascend硬件无效                                        |
+| `volatile`   | `bool`                | 控制 volatile 内存语义，保证内存序、禁止编译器/硬件优化掉 load。Ascend A5 SIMT-only 模式下支持（全局内存与共享内存均生效）；A2/A3 / 非 SIMT-only 模式对硬件无效。 |
 | `_semantic`   | -                 | 保留参数，暂不支持外部调用                                                |
 
-当前910代际均还不支持cache_modifier，eviction_policy， volatile等参数
+**Ascend A5 / SIMT-only 路径已支持 `cache_modifier` 与 `volatile`**（详见参数表）；A2/A3 上 cache_modifier / eviction_policy / volatile 暂不支持。`eviction_policy` 整体对 Ascend 硬件无效。
 
 ### 2.2 支持规格
 
