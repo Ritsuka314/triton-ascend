@@ -344,9 +344,7 @@ def _get_simt_stack_limit(per_kernel) -> int:
         try:
             return int(env.strip(), 0)
         except ValueError as e:
-            raise ValueError(
-                f"TRITON_SIMT_STACK_LIMIT must be a decimal or hex integer; got {env!r}"
-            ) from e
+            raise ValueError(f"TRITON_SIMT_STACK_LIMIT must be a decimal or hex integer; got {env!r}") from e
     return DEFAULT_SIMT_STACK_LIMIT
 
 

@@ -17,7 +17,6 @@
 # LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 # OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 # THE SOFTWARE.
-
 """Unit tests for the SIMT stack-limit resolver in triton.backends.ascend.utils.
 
 Resolution priority: per-kernel `simt_stack_limit` > TRITON_SIMT_STACK_LIMIT env
@@ -44,9 +43,9 @@ def test_default_when_neither_set(monkeypatch):
         ("8192", 8192),
         ("0x800", 2048),
         ("0X400", 1024),
-        ("0", 0),                # 0 is a valid strict limit
-        ("-1", -1),               # negative disables (downstream)
-        ("  4096  ", 4096),       # whitespace tolerated
+        ("0", 0),
+        ("-1", -1),
+        ("  4096  ", 4096),
     ],
 )
 def test_env_var_parsed(monkeypatch, env_value, expected):

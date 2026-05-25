@@ -924,9 +924,7 @@ def ttir_to_npubin(mod, metadata, opt):
             # Always forward a resolved per-thread stack limit; the policy
             # (env var, default 1152) lives here, bishengir-compile / hivmc
             # just enforce what we tell them. See utils._get_simt_stack_limit.
-            _compile_option_list += [
-                f"--simt-stack-limit={_get_simt_stack_limit(opt.simt_stack_limit)}"
-            ]
+            _compile_option_list += [f"--simt-stack-limit={_get_simt_stack_limit(opt.simt_stack_limit)}"]
             if opt.shared_mem_dynamic_size is not None:
                 _compile_option_list += [f"--shared-mem-dynamic-size={opt.shared_mem_dynamic_size}"]
             if opt.enable_simt_reorder_instruction:
