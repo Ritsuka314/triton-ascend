@@ -47,6 +47,7 @@ from triton.backends.ascend.utils import (
     _is_ascend_sanitizer_enabled,
     _is_debug_line_info_disabled,
     _is_auto_map_parallel_blocks_enabled,
+    _get_simt_stack_limit,
     _get_auto_blockify_blacklist_reasons,
     _warn_auto_blockify_disabled,
     downgrade_llir,
@@ -1031,8 +1032,10 @@ def ttir_to_npubin(mod, metadata, opt):
             _compile_option_list += [f"--threads-per-warp={opt.warp_size}"]
             if opt.enable_bishengir_simt_optimization != 000:
                 _compile_option_list += [f"--enable-bishengir-simt-optimization={opt.enable_bishengir_simt_optimization}"]
-            if opt.simt_stack_limit:
-                _compile_option_list += [f"--simt-stack-limit={opt.simt_stack_limit}"]
+            # Always forward a resolved per-thread stack limit; the policy
+            # (env var, default 1152) lives here, bishengir-compile / hivmc
+            # just enforce what we tell them. See utils._get_simt_stack_limit.
+            _compile_option_list += [f"--simt-stack-limit={_get_simt_stack_limit(opt.simt_stack_limit)}"]
             if opt.shared_mem_dynamic_size is not None:
                 _compile_option_list += [f"--shared-mem-dynamic-size={opt.shared_mem_dynamic_size}"]
             if opt.enable_simt_reorder_instruction:

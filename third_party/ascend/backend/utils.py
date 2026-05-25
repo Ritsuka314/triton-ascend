@@ -277,6 +277,34 @@ def _is_auto_map_parallel_blocks_enabled() -> bool:
     return os.getenv("TRITON_ALL_BLOCKS_PARALLEL", default_parallel).lower() in ("true", "1")
 
 
+# CANN runtime's per-thread stack allocation. Used as the SIMT stack-limit
+# default when neither the per-kernel `simt_stack_limit` option nor the
+# TRITON_SIMT_STACK_LIMIT env var is set.
+DEFAULT_SIMT_STACK_LIMIT = 1152
+
+
+def _get_simt_stack_limit(per_kernel) -> int:
+    """Resolve the SIMT per-thread stack limit forwarded to bishengir-compile.
+
+    Resolution priority (highest first):
+      1. per-kernel ``simt_stack_limit`` (NPUOption)
+      2. ``TRITON_SIMT_STACK_LIMIT`` environment variable
+      3. built-in default ``DEFAULT_SIMT_STACK_LIMIT`` (1152, CANN's per-thread stack)
+
+    The env var accepts decimal or hex (``0x...``). A negative limit disables
+    the downstream check; ``0`` is a valid (strict) limit, not a disable sentinel.
+    """
+    if per_kernel is not None:
+        return per_kernel
+    env = os.getenv("TRITON_SIMT_STACK_LIMIT")
+    if env is not None:
+        try:
+            return int(env.strip(), 0)
+        except ValueError as e:
+            raise ValueError(f"TRITON_SIMT_STACK_LIMIT must be a decimal or hex integer; got {env!r}") from e
+    return DEFAULT_SIMT_STACK_LIMIT
+
+
 def _get_auto_blockify_blacklist_reasons(ir_text: str):
     return [description for pattern, description in AUTO_BLOCKIFY_BLACKLIST_RULES if pattern.search(ir_text)]
 
