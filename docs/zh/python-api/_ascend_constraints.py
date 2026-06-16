@@ -570,9 +570,9 @@ CONSTRAINTS = {
         "constraints": [
             "DataType: Ascend A2/A3 does not support uint16/uint32/uint64/fp64, \
                 Ascend 950 does not support fp64 (hardware limitation).",
-            "``cache_modifier``: has no effect on Ascend.",
+            "``cache_modifier``: Ascend A5 SIMT-only accepts the Triton upstream strings (``''``, ``'.ca'``, ``'.cg'``, ``'.cv'``); the backend folds them to a two-level cache / uncache mapping (``'.ca'`` -> cache, ``'.cg'`` / ``'.cv'`` -> uncache). Effective on global memory; ignored on shared memory. A2/A3 and non-SIMT-only paths ignore the modifier.",
             "``eviction_policy``: has no effect on Ascend.",
-            "``volatile``: has no effect on Ascend.",
+            "``volatile``: ``bool``; on Ascend A5 SIMT-only, guarantees memory ordering and prevents the compiler/hardware from hoisting or eliding the load. Effective on both global and shared memory. A2/A3 and non-SIMT-only paths ignore the modifier.",
             "Compatibility issues with branch and loop statements: \
                 Complex pointer and mask calculations involving branches or loops may cause compilation failures.",
         ],
@@ -836,6 +836,9 @@ CONSTRAINTS = {
         "constraints": [
             "DataType: Ascend A2/A3 does not support uint16/uint32/uint64/fp64, \
                 Ascend 950 does not support fp64 (hardware limitation).",
+            "``cache_modifier``: Ascend A5 SIMT-only accepts the Triton upstream strings (``''``, ``'.wb'``, ``'.cg'``, ``'.cs'``, ``'.wt'``); the backend folds them to a two-level cache / uncache mapping (``'.wb'`` -> cache, ``'.cg'`` / ``'.cs'`` / ``'.wt'`` -> uncache). Effective on global memory; ignored on shared memory. A2/A3 and non-SIMT-only paths ignore the modifier.",
+            "``eviction_policy``: has no effect on Ascend.",
+            "``volatile``: not accepted (the Triton upstream ``tl.store`` signature does not expose a ``volatile=`` keyword).",
             "Compatibility issues with branch and loop statements: \
                 Complex pointer and mask calculations involving branches or loops may cause compilation failures.",
         ],
