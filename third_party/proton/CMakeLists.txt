@@ -38,6 +38,7 @@ function(add_proton_library name)
 
   target_include_directories(${name}
     PRIVATE
+      "${ASCEND_HOME_PATH}/include"
       "${CUPTI_INCLUDE_DIR}"
       "${JSON_INCLUDE_DIR}"
       "${PROTON_COMMON_DIR}/include"
@@ -56,7 +57,11 @@ add_subdirectory("${PROTON_COMMON_DIR}")
 add_subdirectory("${PROTON_SRC_DIR}")
 
 # ============ Add subdirectory with proton tests ============
-add_subdirectory(test)
+# The proton test tree uses add_triton_ut, which only exists when the unit-test
+# machinery is built. Gate on TRITON_BUILD_UT so PROTON=ON works with UT off.
+if(TRITON_BUILD_UT)
+  add_subdirectory(test)
+endif()
 
 # ============ Possibly handle macOS specifics ============
 if(APPLE)
