@@ -28,7 +28,7 @@ import sysconfig
 from pathlib import Path
 import logging
 import platform
-from triton.tools.get_ascend_devices import is_compile_on_910_95
+from triton.tools.get_ascend_devices import is_compile_on_910_95, is_a5
 from triton.backends.ascend.backend_register import backend_strategy_registry
 
 import pybind11
@@ -625,6 +625,17 @@ def force_disable_ffts():
 def triton_support_ffts():
     arch = get_ascend_arch_from_env()
     return is_ffts_supported(arch) and (not force_disable_ffts())
+
+
+def triton_support_simt():
+    # SIMT (and therefore proton instrumentation) is only available on
+    # A5 / 950 hardware. Honor an explicit TRITON_ASCEND_ARCH when set
+    # (cross-compile), otherwise fall back to host device detection so the
+    # predicate is correct on CI without the env var.
+    arch = get_ascend_arch_from_env()
+    if arch:
+        return is_a5(arch)
+    return is_compile_on_910_95
 
 
 def triton_enable_libdevice_simt():
