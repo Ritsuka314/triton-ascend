@@ -74,6 +74,21 @@ def min_dot_size(target: GPUTarget):
     return lambda lhsType, rhsType: (1, 1, 1)
 
 
+def _module_uses_proton(mod):
+    # proton.record is the only proton-dialect op present at ttir level; the
+    # richer protongpu ops are produced later, in the SIMT pipeline. Match by
+    # dialect prefix so this stays correct if more proton ttir ops appear.
+    found = False
+
+    def _check(op):
+        nonlocal found
+        if op.get_name().startswith("proton."):
+            found = True
+
+    mod.walk(_check)
+    return found
+
+
 def _get_dump_paths(hash_key: str, src_path: str, dst_path: str) -> Tuple[str, str]:
     """
     If TRITON_DUMP_DIR is set, return paths under that directory.
@@ -105,6 +120,20 @@ def make_ttir(mod, metadata, opt):
         dump_manager = get_dump_manager(metadata["hash"])
         print(f"Dumping intermediate results to {dump_manager.cache_dir}")
         dump_manager.put(str(mod), "kernel.ttir.mlir", binary=False)
+
+    # Proton on Ascend is currently plumbed only through the pure-SIMT npubin
+    # stage (ttir_to_npubin emits the --proton-* flags only when
+    # compile_mode == 'simt_only'). The simd / simd_simt / simt_template paths
+    # don't wire proton yet, so reject here — make_ttir is the one stage that
+    # runs for every compile_mode and has opt — instead of failing later as an
+    # opaque MLIR lowering error.
+    # TODO: drop once proton lands on the SIMD / mixed modes (WIP).
+    if opt.compile_mode != "simt_only" and _module_uses_proton(mod):
+        raise RuntimeError(
+            "Kernel uses proton instrumentation ops, but proton on Ascend is "
+            "currently only supported with compile_mode='simt_only' (pure SIMT). "
+            "Support for SIMD and mixed (simd_simt / simt_template) modes is WIP."
+        )
 
     return mod
 
