@@ -39,6 +39,8 @@ function(add_proton_library name)
   target_include_directories(${name}
     PRIVATE
       "${ASCEND_HOME_PATH}/include"
+      "${ASCEND_HOME_PATH}/include/experiment"
+      "${ASCEND_HOME_PATH}/include/experiment/msprof"
       "${CUPTI_INCLUDE_DIR}"
       "${JSON_INCLUDE_DIR}"
       "${PROTON_COMMON_DIR}/include"

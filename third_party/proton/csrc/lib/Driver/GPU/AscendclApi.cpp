@@ -20,9 +20,6 @@ DEFINE_DISPATCH(ExternLibAscendcl, memAllocHost, aclrtMallocHost, void **, size_
 
 DEFINE_DISPATCH(ExternLibAscendcl, memFreeHost, aclrtFreeHost, void *)
 
-DEFINE_DISPATCH(ExternLibAscendcl, deviceGetAttribute, aclrtGetDeviceInfo,
-                uint32_t, aclrtDevAttr, int64_t *)
-
-} // namespace ascend
+} // namespace cuda
 
 } // namespace proton

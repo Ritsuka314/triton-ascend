@@ -15,6 +15,8 @@ template <bool CheckSuccess> rtError_t ctxGetDevice(int32_t *device);
 template <bool CheckSuccess>
 rtError_t ctxGetStreamPriorityRange(int32_t *leastPriority, int32_t *greatestPriority);
 
+template <bool CheckSuccess> rtError_t deviceGet(uint32_t ordinal, uint32_t *device);
+
 template <bool CheckSuccess>
 rtError_t streamCreateWithPriority(rtStream_t *pStream, int32_t priority);
 
@@ -23,9 +25,6 @@ template <bool CheckSuccess> rtError_t streamSynchronize(rtStream_t stream);
 template <bool CheckSuccess>
 rtError_t memcpyDToHAsync(void *dst, uint64_t destMax, void *src, uint64_t cnt,
                           rtMemcpyKind_t kind, rtStream_t stm);
-
-template <bool CheckSuccess>
-rtError_t getSocVersion(char *ver, uint32_t maxLen);
 
 Device getDevice(uint64_t index);
 

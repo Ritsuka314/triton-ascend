@@ -622,6 +622,10 @@ def force_disable_ffts():
     return disable_ffts
 
 
+def triton_support_simt():
+    return is_compile_on_910_95
+
+
 def triton_support_ffts():
     arch = get_ascend_arch_from_env()
     return is_ffts_supported(arch) and (not force_disable_ffts())

@@ -36,11 +36,6 @@ void AscendRuntime::processHostBuffer(
     uint8_t *hostBuffer, size_t hostBufferSize, uint8_t *deviceBuffer,
     size_t deviceBufferSize, void *stream,
     std::function<void(uint8_t *, size_t)> callback) {
-  // Mirrors CudaRuntime::processHostBuffer / HipRuntime::processHostBuffer:
-  // the source pointer is intentionally not advanced because the current
-  // profile_buffer_size is pinned at 1 (see instrumentation.py FIXME), so the
-  // loop executes exactly once in practice.
-  // Fix when proper device-to-host streaming lands.
   int64_t chunkSize = std::min(hostBufferSize, deviceBufferSize);
   int64_t sizeLeftOnDevice = deviceBufferSize;
   while (chunkSize > 0) {

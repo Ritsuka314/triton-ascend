@@ -3,9 +3,9 @@
 #include "Context/Shadow.h"
 #include "Data/TraceData.h"
 #include "Data/TreeData.h"
-#include "Profiler/Cupti/CuptiProfiler.h"
+// #include "Profiler/Cupti/CuptiProfiler.h"
 #include "Profiler/Instrumentation/InstrumentationProfiler.h"
-#include "Profiler/Roctracer/RoctracerProfiler.h"
+// #include "Profiler/Roctracer/RoctracerProfiler.h"
 #include "Utility/String.h"
 
 namespace proton {
@@ -15,16 +15,16 @@ namespace {
 Profiler *getProfiler(const std::string &name, const std::string &path,
                       const std::string &mode) {
   std::vector<std::string> modeAndOptions = proton::split(mode, ":");
-  if (proton::toLower(name) == "cupti") {
-    auto *profiler = &CuptiProfiler::instance();
-    profiler->setLibPath(path);
-    if (proton::toLower(modeAndOptions[0]) == "pcsampling")
-      profiler->enablePCSampling();
-    return profiler;
-  }
-  if (proton::toLower(name) == "roctracer") {
-    return &RoctracerProfiler::instance();
-  }
+  // if (proton::toLower(name) == "cupti") {
+  //   auto *profiler = &CuptiProfiler::instance();
+  //   profiler->setLibPath(path);
+  //   if (proton::toLower(modeAndOptions[0]) == "pcsampling")
+  //     profiler->enablePCSampling();
+  //   return profiler;
+  // }
+  // if (proton::toLower(name) == "roctracer") {
+  //   return &RoctracerProfiler::instance();
+  // }
   if (proton::toLower(name) == "instrumentation") {
     return InstrumentationProfiler::instance().setMode(modeAndOptions);
   }
