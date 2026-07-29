@@ -3,6 +3,8 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import pytest
+
 
 def _load_driver_module():
     driver_path = Path(__file__).resolve().parents[2] / "backend" / "driver.py"
@@ -34,6 +36,8 @@ def _make_metadata():
         debug=False,
         coalesce_factor=1,
         coalesce_axis=-1,
+        auto_blockified=False,
+        auto_blockify_block_count=0,
     )
 
 
@@ -95,6 +99,48 @@ def test_make_launcher_shrinks_coalesced_grid_for_both_launch_paths(
     )
 
     assert src.count("gridY = gridY / 16;") == 2
+
+
+@patch.object(driver, "NPUUtils")
+@patch.object(driver, "_is_auto_map_parallel_blocks_enabled", return_value=True)
+@patch.object(driver, "force_disable_ffts", return_value=False)
+@patch.object(driver, "is_ffts_supported", return_value=True)
+@patch.object(driver, "get_ascend_arch_from_env", return_value="Ascend910B")
+@patch.object(driver, "get_backend_func", side_effect=_mock_backend_func)
+def test_make_launcher_uses_authoritative_simt_auto_blockify_feedback(
+    _mock_backend_func_patch,
+    _mock_arch,
+    _mock_ffts,
+    _mock_disable_ffts,
+    _mock_auto_map,
+    mock_npu_utils,
+):
+    mock_npu_utils.return_value.get_aivector_core_num.return_value = 40
+    mock_npu_utils.return_value.get_aicore_num.return_value = 20
+
+    simt_metadata = _make_metadata()
+    simt_metadata.force_simt_only = True
+    simt_metadata.parallel_mode = "simt"
+    simt_metadata.auto_blockified = True
+    simt_metadata.auto_blockify_block_count = 64
+    _mock_auto_map.return_value = False
+    src = driver.make_launcher(constants={}, signature={}, metadata=simt_metadata)
+    assert src.count("blockNum = std::min(blockNum, (uint32_t)64);") == 2
+
+    simt_metadata.auto_blockified = False
+    simt_metadata.auto_blockify_block_count = 0
+    _mock_auto_map.return_value = True
+    src = driver.make_launcher(constants={}, signature={}, metadata=simt_metadata)
+    assert "blockNum = std::min(blockNum" not in src
+
+    simd_metadata = _make_metadata()
+    src = driver.make_launcher(constants={}, signature={}, metadata=simd_metadata)
+    assert src.count("blockNum = std::min(blockNum, (uint32_t)40);") == 2
+
+    simt_metadata.auto_blockified = True
+    simt_metadata.auto_blockify_block_count = 0
+    with pytest.raises(ValueError, match="missing a valid block count"):
+        driver.make_launcher(constants={}, signature={}, metadata=simt_metadata)
 
 
 @patch("importlib.util.module_from_spec")

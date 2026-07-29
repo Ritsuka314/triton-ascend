@@ -561,9 +561,18 @@ def make_launcher(constants, signature, metadata):
         "has_auto_blockify_blacklist_op",
         False,
     )
-    enable_auto_map_parallel_blocks = (_is_auto_map_parallel_blocks_enabled() and not has_auto_blockify_blacklist_op)
     npu_utils = NPUUtils()
     num_physical_blocks = npu_utils.get_aivector_core_num() if mix_mode == "aiv" else npu_utils.get_aicore_num()
+    if metadata.force_simt_only:
+        enable_auto_map_parallel_blocks = getattr(metadata, "auto_blockified", False)
+        auto_blockify_block_count = getattr(metadata, "auto_blockify_block_count", 0)
+        if enable_auto_map_parallel_blocks and auto_blockify_block_count <= 0:
+            raise ValueError("auto-blockified SIMT kernel is missing a valid block count")
+        block_count_limit = auto_blockify_block_count
+    else:
+        enable_auto_map_parallel_blocks = (_is_auto_map_parallel_blocks_enabled()
+                                           and not has_auto_blockify_blacklist_op)
+        block_count_limit = num_physical_blocks
     task_type, mix_block_dim_ratio = _format_of_msprof_task_type_ratio(bs_task_type, mix_mode)
     is_mix_task_type = "true" if ("MIX" in task_type) else "false"
     LINE_CHANGE_CHAR = chr(10)  # it is \n
@@ -938,7 +947,7 @@ void triton_launch_kernel(
         warned = true;
     }}
     #endif
-    {'blockNum = std::min(blockNum, (uint32_t)' + str(num_physical_blocks) + ');' if enable_auto_map_parallel_blocks else ''}
+    {'blockNum = std::min(blockNum, (uint32_t)' + str(block_count_limit) + ');' if enable_auto_map_parallel_blocks else ''}
     // set mixBlockNumRation for nodeBasicBlockDim for msprof report
     uint32_t mixBlockNumRation = {mix_block_dim_ratio};
     uint32_t nodeBasicBlockDim = (mixBlockNumRation << 16) + blockNum;
@@ -1050,7 +1059,7 @@ static void _launch(const char* kernelName, const void* func, rtStream_t stream,
         warned = true;
     }}
     #endif
-    {'blockNum = std::min(blockNum, (uint32_t)' + str(num_physical_blocks) + ');' if enable_auto_map_parallel_blocks else ''}
+    {'blockNum = std::min(blockNum, (uint32_t)' + str(block_count_limit) + ');' if enable_auto_map_parallel_blocks else ''}
     uint32_t mixBlockNumRation = {mix_block_dim_ratio};
     uint32_t nodeBasicBlockDim = (mixBlockNumRation << 16) + blockNum;
 

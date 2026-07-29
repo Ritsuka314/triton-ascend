@@ -22,13 +22,14 @@ import ctypes
 import functools
 import hashlib
 import glob
+import json
 import os
 import re
 import shlex
 import subprocess
 import tempfile
 import warnings
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Dict, Optional, Tuple, Union
@@ -434,12 +435,9 @@ def _parse_ttir_metadata(ttir: str, metadata: dict):
     metadata["mix_mode"] = "aiv"
     metadata["kernel_name"] = re.search(KERNEL_NAME_REGEX, ttir).group(1)
     metadata["name"] = metadata["kernel_name"]
-    auto_map_parallel_blocks_enabled = _is_auto_map_parallel_blocks_enabled()
     has_auto_blockify_blacklist_op = metadata.get("has_auto_blockify_blacklist_op")
-    if has_auto_blockify_blacklist_op is None and auto_map_parallel_blocks_enabled:
+    if has_auto_blockify_blacklist_op is None:
         has_auto_blockify_blacklist_op = bool(_get_auto_blockify_blacklist_reasons(ttir))
-    elif has_auto_blockify_blacklist_op is None:
-        has_auto_blockify_blacklist_op = False
     metadata["has_auto_blockify_blacklist_op"] = has_auto_blockify_blacklist_op
     # Parse all tensor kinds from arguments
     metadata["tensor_kinds"] = [int(kind) for _, kind in re.findall(TENSOR_KIND_REGEX, ttir)]
@@ -1109,6 +1107,7 @@ class NPUOptions:
 
     # superblocking factor
     superblock_factor: int = 0
+    npu_device_limit_snapshot: Optional[str] = field(default=None, init=False)
 
     def __post_init__(self):
         from triton.backends.ascend import _apply_ascend_patch
@@ -1125,6 +1124,13 @@ class NPUOptions:
             object.__setattr__(self, "parallel_mode", "simt")
 
         if self.force_simt_only:
+            object.__setattr__(self, "npu_device_limit_snapshot", os.getenv("NPU_DEVICE_LIMIT"))
+            enable_auto_blockify = self.enable_auto_blockify
+            if self.superblock_factor > 1:
+                enable_auto_blockify = True
+            elif enable_auto_blockify is None:
+                enable_auto_blockify = _is_auto_map_parallel_blocks_enabled()
+            object.__setattr__(self, "enable_auto_blockify", enable_auto_blockify)
             if self.shared_mem_dynamic_size is None:
                 object.__setattr__(self, "shared_mem_dynamic_size", 122880)
         else:
@@ -1147,9 +1153,12 @@ def ttir_to_npubin(mod, metadata, opt):
         # prepare output
         bin_file = os.path.join(tmpdir, "kernel")
         bin_path = os.path.join(tmpdir, "kernel.o")
+        triton_metadata_path = os.path.join(tmpdir, "triton-metadata.json")
         # build compile options
         _compile_option_list = get_common_bishengir_compile_options(metadata)
+        enable_auto_blockify = False
         if opt.force_simt_only:
+            _compile_option_list += [f"--triton-metadata-output={triton_metadata_path}"]
             _compile_option_list += ["--enable-hivm-compile=false"]
             _compile_option_list += ["--enable-triton-ir-compile"]
             _compile_option_list += ["--pure-simt"]
@@ -1168,28 +1177,29 @@ def ttir_to_npubin(mod, metadata, opt):
             if opt.disable_fma:
                 _compile_option_list += [f"--disable-fma"]
 
-            # Enable SIMT auto-blockify if user opted in, or if the env var is
-            # set and the user didn't explicitly opt out (matches the SIMD path
-            # at line ~541).
-            enable_auto_blockify = opt.enable_auto_blockify
-            if _is_auto_map_parallel_blocks_enabled():
-                if enable_auto_blockify is None or enable_auto_blockify:
-                    _compile_option_list += ["--enable-auto-blockify-loop"]
-            else:
-                if enable_auto_blockify:
-                    _compile_option_list += ["--enable-auto-blockify-loop"]
+            has_auto_blockify_blacklist_op = metadata.get("has_auto_blockify_blacklist_op", False)
+            if opt.superblock_factor > 1 and has_auto_blockify_blacklist_op:
+                raise ValueError(f"superblock_factor={opt.superblock_factor} requires SIMT auto blockify, "
+                                 "but the kernel contains an operation that is incompatible with auto blockify")
+            enable_auto_blockify = ((bool(opt.enable_auto_blockify) or opt.superblock_factor > 1)
+                                    and not has_auto_blockify_blacklist_op)
+            if enable_auto_blockify:
+                _compile_option_list += ["--enable-auto-blockify-loop"]
+            if opt.superblock_factor > 1:
+                _compile_option_list += [f"--super-block-factor={opt.superblock_factor}"]
+
+            if os.getenv("NPU_DEVICE_LIMIT") != opt.npu_device_limit_snapshot:
+                raise ValueError("NPU_DEVICE_LIMIT changed after the compilation options were created")
+            if opt.npu_device_limit_snapshot is not None:
+                npu_utils = NPUUtils()
+                _compile_option_list += [
+                    f"--custom-aic-number={npu_utils.get_aicore_num()}",
+                    f"--custom-aiv-number={npu_utils.get_aivector_core_num()}",
+                ]
 
             bisheng_options = metadata["bisheng_options"]
             if bisheng_options is not None:
                 _compile_option_list += [f"--append-bisheng-options={bisheng_options}"]
-
-            # Enable SIMT auto-blockify when TRITON_ALL_BLOCKS_PARALLEL is set,
-            # mirroring the SIMD compile paths. driver.py's runtime block-count
-            # cap keys off the same env switch, so the two stay in sync.
-            if _is_auto_map_parallel_blocks_enabled():
-                _compile_option_list += ["--enable-auto-blockify-loop"]
-                if opt.superblock_factor > 0:
-                    _compile_option_list += [f"--super-block-factor={opt.superblock_factor}"]
 
         npu_compiler_path, env = _get_npucompiler_path()
         cmd_list = ([npu_compiler_path, src_path] + _compile_option_list + ["-o", bin_file])
@@ -1199,6 +1209,28 @@ def ttir_to_npubin(mod, metadata, opt):
             print(f"[DEBUG] {bin_path} is not found")
             print(f"[DEBUG] Stderr:\n{error_msg}")
             raise subprocess.CalledProcessError(ret.returncode, cmd_list, ret.stdout, ret.stderr)
+        triton_metadata = json.loads(Path(triton_metadata_path).read_text())
+        if not isinstance(triton_metadata, dict):
+            raise ValueError("Triton metadata must be a JSON object")
+        has_auto_blockified = "auto_blockified" in triton_metadata
+        has_auto_blockify_block_count = "auto_blockify_block_count" in triton_metadata
+        if enable_auto_blockify and not (has_auto_blockified and has_auto_blockify_block_count):
+            raise ValueError("the NPUIR compiler does not provide SIMT auto blockify feedback")
+        auto_blockified = triton_metadata.get("auto_blockified", False)
+        auto_blockify_block_count = triton_metadata.get("auto_blockify_block_count", 0)
+        if not isinstance(auto_blockified, bool):
+            raise ValueError("Triton metadata field 'auto_blockified' must be a boolean")
+        if (isinstance(auto_blockify_block_count, bool) or not isinstance(auto_blockify_block_count, int)
+                or auto_blockify_block_count < 0):
+            raise ValueError("Triton metadata field 'auto_blockify_block_count' must be a non-negative integer")
+        if auto_blockified != (auto_blockify_block_count > 0):
+            raise ValueError("Triton metadata fields 'auto_blockified' and "
+                             "'auto_blockify_block_count' are inconsistent")
+        if opt.superblock_factor > 1 and not auto_blockified:
+            raise ValueError(f"superblock_factor={opt.superblock_factor} requires the compiler "
+                             "to confirm successful SIMT auto blockify")
+        metadata["auto_blockified"] = auto_blockified
+        metadata["auto_blockify_block_count"] = auto_blockify_block_count
         return Path(bin_path).read_bytes()
 
 
@@ -1218,7 +1250,11 @@ class AscendBackend(BaseBackend):
     def parse_options(self, opts) -> Any:
         # TODO: get available targets when building options?
         if self.target.backend == "npu":
-            args = {k: opts[k] for k in NPUOptions.__dataclass_fields__.keys() if k in opts}
+            args = {
+                name: opts[name]
+                for name, option in NPUOptions.__dataclass_fields__.items()
+                if option.init and name in opts
+            }
             args.setdefault("arch", self.target.arch)
             options = NPUOptions(**args)
             # Lazy init compile_on_910_95 if not provided
