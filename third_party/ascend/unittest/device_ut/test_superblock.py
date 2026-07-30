@@ -446,9 +446,11 @@ def test_superblock_partitions_cross_warp_reduction_state(tmp_path):
     _run_case_with_timeout("shared-partition", tmp_path)
 
 
-def test_soft_barrier_product_64_yields_and_completes(tmp_path):
-    _run_case_with_timeout("product-64-yield", tmp_path)
-
-
 def test_one_warp_superblock_allows_2048_threads(tmp_path):
     _run_case_with_timeout("one-warp-2048", tmp_path)
+
+
+def test_soft_barrier_product_64_yields_and_completes(tmp_path):
+    # Keep the highest-contention case last: a device-side deadlock can poison
+    # the device context even after the host child process is terminated.
+    _run_case_with_timeout("product-64-yield", tmp_path)
