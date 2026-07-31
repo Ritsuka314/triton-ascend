@@ -43,7 +43,7 @@ _SENTINEL = -777777
 @triton.jit
 def count_launches_without_program_id(counter):
     lanes = tl.arange(0, 32)
-    tl.atomic_add(counter, 1, mask=lanes == 0)
+    tl.atomic_add(counter + lanes, 1)
 
 
 @triton.jit
@@ -133,7 +133,7 @@ def _run_feedback_case(result_queue):
     physical_blocks = NPUUtils().get_aivector_core_num()
     assert physical_blocks > 0
     logical_blocks = physical_blocks + 3
-    counter = torch.zeros((1, ), dtype=torch.int32, device="npu")
+    counter = torch.zeros((32, ), dtype=torch.int32, device="npu")
     options = {
         "compile_mode": "simt_only",
         "enable_auto_blockify": True,
@@ -156,9 +156,9 @@ def _run_feedback_case(result_queue):
         expected_block_count=0,
     )
 
-    actual = counter.cpu().item()
-    assert actual == logical_blocks, ("AutoBlockify was not applied, so launch feedback must preserve the "
-                                      f"logical launch count; expected {logical_blocks}, got {actual}")
+    actual = counter.cpu()
+    expected = torch.full((32, ), logical_blocks, dtype=torch.int32)
+    torch.testing.assert_close(actual, expected)
 
 
 def _run_tail_barrier_case(result_queue):
