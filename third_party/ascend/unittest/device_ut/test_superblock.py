@@ -133,7 +133,7 @@ def _run_feedback_case(result_queue):
     physical_blocks = NPUUtils().get_aivector_core_num()
     assert physical_blocks > 0
     logical_blocks = physical_blocks + 3
-    counter = torch.zeros((1,), dtype=torch.int32, device="npu")
+    counter = torch.zeros((1, ), dtype=torch.int32, device="npu")
     options = {
         "compile_mode": "simt_only",
         "enable_auto_blockify": True,
@@ -148,8 +148,8 @@ def _run_feedback_case(result_queue):
 
     _compile_and_launch(
         count_launches_without_program_id,
-        (logical_blocks,),
-        (counter,),
+        (logical_blocks, ),
+        (counter, ),
         options,
         result_queue,
         expected_auto_blockified=False,
@@ -157,10 +157,8 @@ def _run_feedback_case(result_queue):
     )
 
     actual = counter.cpu().item()
-    assert actual == logical_blocks, (
-        "AutoBlockify was not applied, so launch feedback must preserve the "
-        f"logical launch count; expected {logical_blocks}, got {actual}"
-    )
+    assert actual == logical_blocks, ("AutoBlockify was not applied, so launch feedback must preserve the "
+                                      f"logical launch count; expected {logical_blocks}, got {actual}")
 
 
 def _run_tail_barrier_case(result_queue):
@@ -172,7 +170,7 @@ def _run_tail_barrier_case(result_queue):
     logical_blocks = physical_blocks * factor - 1
     num_elements = logical_blocks * block
     padded_elements = (logical_blocks + 1) * block
-    scratch = torch.full((padded_elements,), _SENTINEL, dtype=torch.int32, device="npu")
+    scratch = torch.full((padded_elements, ), _SENTINEL, dtype=torch.int32, device="npu")
     out = torch.full_like(scratch, _SENTINEL)
     options = {
         "compile_mode": "simt_only",
@@ -185,7 +183,7 @@ def _run_tail_barrier_case(result_queue):
 
     _compile_and_launch(
         task_local_barrier_tail,
-        (logical_blocks,),
+        (logical_blocks, ),
         (scratch, out, block),
         options,
         result_queue,
@@ -198,11 +196,11 @@ def _run_tail_barrier_case(result_queue):
     torch.testing.assert_close(actual[:num_elements].reshape(logical_blocks, block), expected)
     torch.testing.assert_close(
         actual[num_elements:],
-        torch.full((block,), _SENTINEL, dtype=torch.int32),
+        torch.full((block, ), _SENTINEL, dtype=torch.int32),
     )
     torch.testing.assert_close(
         scratch.cpu()[num_elements:],
-        torch.full((block,), _SENTINEL, dtype=torch.int32),
+        torch.full((block, ), _SENTINEL, dtype=torch.int32),
     )
 
 
@@ -215,7 +213,7 @@ def _run_product_64_case(result_queue):
     assert physical_blocks > 0
     logical_blocks = physical_blocks * factor
     num_elements = logical_blocks * block
-    scratch = torch.empty((num_elements,), dtype=torch.int32, device="npu")
+    scratch = torch.empty((num_elements, ), dtype=torch.int32, device="npu")
     out = torch.empty_like(scratch)
     options = {
         "compile_mode": "simt_only",
@@ -227,7 +225,7 @@ def _run_product_64_case(result_queue):
 
     _compile_and_launch(
         contended_repeated_barrier,
-        (logical_blocks,),
+        (logical_blocks, ),
         (scratch, out, block, steps),
         options,
         result_queue,
@@ -246,7 +244,7 @@ def _run_shared_partition_case(result_queue):
     physical_blocks = NPUUtils().get_aivector_core_num()
     assert physical_blocks > 0
     logical_blocks = physical_blocks * factor
-    out = torch.empty((logical_blocks,), dtype=torch.int32, device="npu")
+    out = torch.empty((logical_blocks, ), dtype=torch.int32, device="npu")
     options = {
         "compile_mode": "simt_only",
         "enable_auto_blockify": False,
@@ -257,7 +255,7 @@ def _run_shared_partition_case(result_queue):
 
     _compile_and_launch(
         per_task_cross_warp_reduction,
-        (logical_blocks,),
+        (logical_blocks, ),
         (out, block),
         options,
         result_queue,
@@ -274,7 +272,7 @@ def _run_one_warp_2048_case(result_queue):
     factor = 128
     physical_blocks = NPUUtils().get_aivector_core_num()
     assert physical_blocks > 0
-    out = torch.empty((factor,), dtype=torch.int32, device="npu")
+    out = torch.empty((factor, ), dtype=torch.int32, device="npu")
     options = {
         "compile_mode": "simt_only",
         "enable_auto_blockify": False,
@@ -285,8 +283,8 @@ def _run_one_warp_2048_case(result_queue):
 
     _compile_and_launch(
         one_warp_fence_boundary,
-        (factor,),
-        (out,),
+        (factor, ),
+        (out, ),
         options,
         result_queue,
         expected_auto_blockified=True,
