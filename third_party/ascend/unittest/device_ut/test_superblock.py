@@ -95,11 +95,11 @@ def contended_repeated_barrier(scratch, out, BLOCK: tl.constexpr, STEPS: tl.cons
 
 
 @triton.jit
-def one_warp_fence_boundary(out):
+def one_warp_fence_boundary(out, BLOCK: tl.constexpr):
     pid = tl.program_id(0)
-    lanes = tl.arange(0, 16)
+    lanes = tl.arange(0, BLOCK)
     tl.debug_barrier()
-    tl.store(out + pid, pid + 1, mask=lanes == 0)
+    tl.store(out + pid * BLOCK + lanes, pid + 1)
 
 
 def _compile_and_launch(
@@ -270,28 +270,29 @@ def _run_shared_partition_case(result_queue):
 
 def _run_one_warp_2048_case(result_queue):
     factor = 128
+    warp_size = 16
     physical_blocks = NPUUtils().get_aivector_core_num()
     assert physical_blocks > 0
-    out = torch.empty((factor, ), dtype=torch.int32, device="npu")
+    out = torch.empty((factor * warp_size, ), dtype=torch.int32, device="npu")
     options = {
         "compile_mode": "simt_only",
         "enable_auto_blockify": False,
         "superblock_factor": factor,
         "num_warps": 1,
-        "warp_size": 16,
+        "warp_size": warp_size,
     }
 
     _compile_and_launch(
         one_warp_fence_boundary,
         (factor, ),
-        (out, ),
+        (out, warp_size),
         options,
         result_queue,
         expected_auto_blockified=True,
         expected_block_count=physical_blocks,
     )
 
-    expected = torch.arange(1, factor + 1, dtype=torch.int32)
+    expected = torch.arange(1, factor + 1, dtype=torch.int32).repeat_interleave(warp_size)
     torch.testing.assert_close(out.cpu(), expected)
 
 
