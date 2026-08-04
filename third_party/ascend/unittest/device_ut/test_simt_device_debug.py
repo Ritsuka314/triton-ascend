@@ -84,8 +84,13 @@ _FIELD_SPLIT_RE = re.compile(r"(?m)^([^\n]*):\s*$")
 
 
 def normalize_device_print(text):
-    return "\n".join(line for raw in text.splitlines()
-                     if (line := raw.strip()) and line != HEADER and not _SEP_RE.fullmatch(line))
+    return "\n".join(
+        line
+        for raw in text.splitlines()
+        if (line := raw.strip())
+        and line != HEADER
+        and not _SEP_RE.fullmatch(line)
+    )
 
 
 class _BoolSub(ast.NodeTransformer):
@@ -120,7 +125,10 @@ def parse_record(vec, body, value_parsers):
         grouped_fields[name].append(parser(value))
 
     record = {"vec": int(vec)}
-    record.update((name, values[0] if len(values) == 1 else values) for name, values in grouped_fields.items())
+    record.update(
+        (name, values[0] if len(values) == 1 else values)
+        for name, values in grouped_fields.items()
+    )
 
     if assertion_matches:
         assertions = [{
@@ -133,8 +141,13 @@ def parse_record(vec, body, value_parsers):
 
 
 def parse_device_print_records(text, value_parsers, debug):
-    record_parts = iter(_RECORD_SPLIT_RE.split(normalize_device_print(text))[1:])
-    records = [parse_record(vec, body, value_parsers) for vec, body in zip(record_parts, record_parts)]
+    record_parts = iter(
+        _RECORD_SPLIT_RE.split(normalize_device_print(text))[1:]
+    )
+    records = [
+        parse_record(vec, body, value_parsers)
+        for vec, body in zip(record_parts, record_parts)
+    ]
 
     if debug:
         print(records)
@@ -172,11 +185,14 @@ def check_strict_equal(actual, expected, path="root"):
                     f"  extra:   {actual_keys - expected_keys!r}")
 
         for key in actual:
-            return check_strict_equal(
+            mismatch = check_strict_equal(
                 actual[key],
                 expected[key],
                 f"{path}[{key!r}]",
             )
+            if mismatch is not None:
+                return mismatch
+        return None
 
     elif isinstance(actual, (list, tuple)):
         if len(actual) != len(expected):
@@ -184,12 +200,17 @@ def check_strict_equal(actual, expected, path="root"):
                     f"  actual:   {len(actual)}\n"
                     f"  expected: {len(expected)}")
 
-        for index, (actual_item, expected_item) in enumerate(zip(actual, expected)):
-            return check_strict_equal(
+        for index, (actual_item, expected_item) in enumerate(
+            zip(actual, expected)
+        ):
+            mismatch = check_strict_equal(
                 actual_item,
                 expected_item,
                 f"{path}[{index}]",
             )
+            if mismatch is not None:
+                return mismatch
+        return None
 
     elif actual != expected:
         return (f"{path}: value mismatch\n"
@@ -210,13 +231,17 @@ def assert_kernel_output(
     debug=False,
 ):
     outerr, exc = capture_kernel_outerr(capfd, launch, debug)
-    records = parse_device_print_records(outerr.out, value_parsers or {}, debug)
+    records = parse_device_print_records(
+        outerr.out, value_parsers or {}, debug
+    )
 
     if exception is None:
         if exc is not None:
             raise exc
     else:
-        assert isinstance(exc, exception), (f"Expected {exception}, got {type(exc)}")
+        assert isinstance(exc, exception), (
+            f"Expected {exception}, got {type(exc)}"
+        )
 
     if expected is not None:
         mismatch = check_strict_equal(round_val(records), round_val(expected))
@@ -229,18 +254,19 @@ def assert_kernel_output(
 
 
 SCALARS = [
-    (42, torch.int32, "int32"),
-    (2**31 + 1, torch.uint32, "uint32"),
-    (2**63 + 1, torch.uint64, "uint64"),
-    (True, torch.bool, "bool"),
-    (0.375, torch.float16, "fp16"),  # torch half
-    (0.375, torch.float32, "fp32"),
-    (0.375, torch.float64, "fp64"),  # torch double
-    (0.375, torch.bfloat16, "bf16"),
-    (0.375, torch.float8_e4m3fn, "fp8e4m3fn"),
+    (42,        torch.int32,            "int32"),
+    (2**31 + 1, torch.uint32,           "uint32"),
+    (2**63 + 1, torch.uint64,           "uint64"),
+    (True,      torch.bool,             "bool"),
+    (0.375,     torch.float16,          "fp16"), # torch half
+    (0.375,     torch.float32,          "fp32"),
+    # device print does not support
+    # (0.375,     torch.float64,          "fp64"), # torch double
+    (0.375,     torch.bfloat16,         "bf16"),
+    (0.375,     torch.float8_e4m3fn,    "fp8e4m3fn"),
     # device print does not support
     # (0.375,     torch.float8_e4m3fnuz,  "float8e4b8"),
-    (0.375, torch.float8_e5m2, "fp8e5m2"),
+    (0.375,     torch.float8_e5m2,      "fp8e5m2"),
     # device print does not support
     # (0.375,     torch.float8_e5m2fnuz,  "fp8e5b16"),
 ]
@@ -253,7 +279,9 @@ def print_kernel_arg_constexpr(x: tl.constexpr):
     tl.device_print("const:", x)
 
 
-@pytest.mark.parametrize("value", [pytest.param(value, id=id) for value, _, id in SCALARS])
+@pytest.mark.parametrize("value", [
+    pytest.param(value, id=id,)
+    for value, _, id in SCALARS])
 def test_print_kernel_arg_constexpr(capfd, value):
     assert_kernel_output(capfd, launch=lambda: print_kernel_arg_constexpr[(1, )](value, compile_mode="simt_only"),
                          expected=[{'vec': 0, 'const': value}])
@@ -325,7 +353,8 @@ def test_assert_kernel_arg_scalar(capfd, value):
 
     assert_kernel_output(
         capfd,
-        launch=lambda: assert_kernel_arg_scalar[(1, )](value, compile_mode="simt_only"),
+        launch=lambda: assert_kernel_arg_scalar[(1,)](
+            value, compile_mode="simt_only", debug=True),
         expected=expected,
         exception=exception,
     )
