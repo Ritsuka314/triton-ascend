@@ -27,121 +27,192 @@ from triton.backends.ascend.utils import is_compile_on_910_95
 
 pytestmark = pytest.mark.skipif(not is_compile_on_910_95(), reason="SIMT-only compilation requires A5")
 
-INT32_INPUTS = (
-    -2147483648,
-    -2147483647,
-    -2109734912,  # Regression: this value produced -100662384 for `% 1000`.
-    # Fast-div carry boundaries for divisors 3 and 1000.
-    -1073741825,
-    -1073741824,
-    -1073741823,
-    -100663297,
-    -100663296,
-    -100663295,
-    -2001,
-    -2000,
-    -1999,
-    -1001,
+INT32_MIN = -(2**31)
+INT32_MAX = 2**31 - 1
+UINT32_MAX = 2**32 - 1
+
+SIGNED_DIVISORS = (
+    INT32_MIN,
     -1000,
-    -999,
-    -257,
-    -256,
-    -255,
-    -129,
     -128,
-    -127,
     -7,
-    -6,
-    -5,
-    -4,
     -3,
     -2,
     -1,
-    0,
     1,
     2,
     3,
-    4,
-    5,
-    6,
     7,
-    127,
     128,
-    129,
-    255,
-    256,
-    257,
+    1000,
+    INT32_MAX,
+)
+
+SIGNED_BASE_VALUES = (
+    INT32_MIN,
+    -2109734912,
+    -1001,
+    -1000,
+    -999,
+    -1,
+    0,
+    1,
     999,
     1000,
     1001,
-    1999,
-    2000,
-    2001,
-    1073741823,
-    1073741824,
-    # Fast-div signed-shift boundaries for divisors 3 and 1000.
-    1610612735,
-    1610612736,
-    1610612737,
-    2097151999,
-    2097152000,
-    2097152001,
-    2147483646,
-    2147483647,
+    INT32_MAX,
 )
 
-# Zero is invalid, and -1 is omitted because the inputs include INT32_MIN.
-DIVISORS = (
-    pytest.param(3, id="divisor_3"),
-    pytest.param(128, id="divisor_128"),
-    pytest.param(1000, id="divisor_1000"),
-    pytest.param(2147483647, id="divisor_int32_max"),
-    pytest.param(-3, id="divisor_neg_3"),
-    pytest.param(-128, id="divisor_neg_128"),
-    pytest.param(-1000, id="divisor_neg_1000"),
+UNSIGNED_DIVISORS = (
+    1,
+    2,
+    3,
+    7,
+    128,
+    1000,
+    0x7FFFFFFF,
+    0x80000000,
+    0x80000001,
+    0xFFFFFFFE,
+    0xFFFFFFFF,
 )
 
-BLOCK_SIZE = 64
+UNSIGNED_BASE_VALUES = (
+    0,
+    1,
+    2,
+    0x7FFFFFFF,
+    0x80000000,
+    0x82400000,
+    0xFFFFFFFE,
+    0xFFFFFFFF,
+)
+
+
+def trunc_div(value, divisor):
+    quotient = abs(value) // abs(divisor)
+    return -quotient if (value < 0) != (divisor < 0) else quotient
+
+
+def signed_remainder(value, divisor):
+    return value - trunc_div(value, divisor) * divisor
+
+
+def to_int32_bits(value):
+    value &= UINT32_MAX
+    return value if value < 0x80000000 else value - 0x100000000
+
+
+def signed_values(divisor):
+    values = set(SIGNED_BASE_VALUES)
+    magnitude = abs(divisor)
+    values.update(value for value in (
+        -magnitude - 1,
+        -magnitude,
+        -magnitude + 1,
+        magnitude - 1,
+        magnitude,
+        magnitude + 1,
+    ) if INT32_MIN <= value <= INT32_MAX)
+    return tuple(sorted(values))
+
+
+def unsigned_values(divisor):
+    values = set(UNSIGNED_BASE_VALUES)
+    values.update(value for value in (divisor - 1, divisor, divisor + 1) if 0 <= value <= UINT32_MAX)
+    return tuple(sorted(values))
 
 
 @triton.jit
-def simt_div_kernel(x_ptr, divisor: tl.constexpr, output_ptr, n_elements: tl.constexpr, BLOCK_SIZE: tl.constexpr):
-    offsets = tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask, other=0)
-    output = x // divisor
-    tl.store(output_ptr + offsets, output, mask=mask)
+def simt_div_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+    pid = tl.program_id(0)
+    x = tl.load(x_ptr + pid)
+    divisor = tl.full((), DIVISOR, tl.int32)
+    tl.store(output_ptr + pid, x // divisor)
 
 
 @triton.jit
-def simt_mod_kernel(x_ptr, divisor: tl.constexpr, output_ptr, n_elements: tl.constexpr, BLOCK_SIZE: tl.constexpr):
-    offsets = tl.arange(0, BLOCK_SIZE)
-    mask = offsets < n_elements
-    x = tl.load(x_ptr + offsets, mask=mask, other=0)
-    output = x % divisor
-    tl.store(output_ptr + offsets, output, mask=mask)
+def simt_mod_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+    pid = tl.program_id(0)
+    x = tl.load(x_ptr + pid)
+    divisor = tl.full((), DIVISOR, tl.int32)
+    tl.store(output_ptr + pid, x % divisor)
 
 
-@pytest.mark.parametrize("divisor", DIVISORS)
+@triton.jit
+def simt_udiv_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+    pid = tl.program_id(0)
+    x = tl.load(x_ptr + pid).to(tl.uint32)
+    divisor = tl.full((), DIVISOR, tl.uint32)
+    result = x // divisor
+    tl.store(output_ptr + pid, result.to(tl.int32))
+
+
+@triton.jit
+def simt_umod_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+    pid = tl.program_id(0)
+    x = tl.load(x_ptr + pid).to(tl.uint32)
+    divisor = tl.full((), DIVISOR, tl.uint32)
+    result = x % divisor
+    tl.store(output_ptr + pid, result.to(tl.int32))
+
+
+@pytest.mark.parametrize("divisor", SIGNED_DIVISORS, ids=lambda divisor: f"divisor_{divisor}")
 def test_simt_int32_div(divisor):
-    x_cpu = torch.tensor(INT32_INPUTS, dtype=torch.int32)
+    values = signed_values(divisor)
+    if divisor == -1:
+        values = tuple(value for value in values if value != INT32_MIN)
+    x_cpu = torch.tensor(values, dtype=torch.int32)
+    expected = torch.tensor([trunc_div(value, divisor) for value in values], dtype=torch.int32)
     x = x_cpu.to("npu")
     actual = torch.empty_like(x)
 
-    simt_div_kernel[(1, )](x, divisor, actual, len(INT32_INPUTS), BLOCK_SIZE, compile_mode="simt_only")
+    simt_div_kernel[(x.numel(), )](x, actual, divisor, compile_mode="simt_only")
 
-    expected = torch.div(x_cpu, divisor, rounding_mode="trunc")
     torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)
 
 
-@pytest.mark.parametrize("divisor", DIVISORS)
+@pytest.mark.parametrize("divisor", SIGNED_DIVISORS, ids=lambda divisor: f"divisor_{divisor}")
 def test_simt_int32_mod(divisor):
-    x_cpu = torch.tensor(INT32_INPUTS, dtype=torch.int32)
+    values = signed_values(divisor)
+    x_cpu = torch.tensor(values, dtype=torch.int32)
+    expected = torch.tensor([signed_remainder(value, divisor) for value in values], dtype=torch.int32)
     x = x_cpu.to("npu")
     actual = torch.empty_like(x)
 
-    simt_mod_kernel[(1, )](x, divisor, actual, len(INT32_INPUTS), BLOCK_SIZE, compile_mode="simt_only")
+    simt_mod_kernel[(x.numel(), )](x, actual, divisor, compile_mode="simt_only")
 
-    quotient = torch.div(x_cpu, divisor, rounding_mode="trunc")
-    expected = x_cpu - quotient * divisor
     torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("divisor", UNSIGNED_DIVISORS, ids=lambda divisor: f"divisor_{divisor:#x}")
+def test_simt_uint32_div(divisor):
+    values = unsigned_values(divisor)
+    x_cpu = torch.tensor([to_int32_bits(value) for value in values], dtype=torch.int32)
+    expected = torch.tensor([to_int32_bits(value // divisor) for value in values], dtype=torch.int32)
+    x = x_cpu.to("npu")
+    actual = torch.empty_like(x)
+
+    simt_udiv_kernel[(x.numel(), )](x, actual, divisor, compile_mode="simt_only")
+
+    torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)
+
+
+@pytest.mark.parametrize("divisor", UNSIGNED_DIVISORS, ids=lambda divisor: f"divisor_{divisor:#x}")
+def test_simt_uint32_mod(divisor):
+    values = unsigned_values(divisor)
+    x_cpu = torch.tensor([to_int32_bits(value) for value in values], dtype=torch.int32)
+    expected = torch.tensor([to_int32_bits(value % divisor) for value in values], dtype=torch.int32)
+    x = x_cpu.to("npu")
+    actual = torch.empty_like(x)
+
+    simt_umod_kernel[(x.numel(), )](x, actual, divisor, compile_mode="simt_only")
+
+    torch.testing.assert_close(actual.cpu(), expected, rtol=0, atol=0)
+
+
+def test_unsigned_oracle_mutation_killers():
+    assert 0xFFFFFFFE // 3 == 1431655764
+    assert 0xFFFFFFFE % 3 == 2
+    assert 0xFFFFFFFE // 1000 == 4294967
+    assert 0xFFFFFFFE % 1000 == 294
