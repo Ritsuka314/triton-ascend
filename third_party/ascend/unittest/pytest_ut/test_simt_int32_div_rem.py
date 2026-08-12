@@ -50,6 +50,7 @@ SIGNED_DIVISORS = (
 
 SIGNED_BASE_VALUES = (
     INT32_MIN,
+    # Preserve the 2109734912 % 1000 family for signed magnitude/sign restoration.
     -2109734912,
     -1001,
     -1000,
@@ -64,17 +65,17 @@ SIGNED_BASE_VALUES = (
 )
 
 UNSIGNED_DIVISORS = (
-    1,
+    1,  # s=0, sh1=0, sh2=0
     2,
     3,
     7,
     128,
-    1000,
+    1000,  # Ordinary non-power-of-two divisor.
     0x7FFFFFFF,
     0x80000000,
-    0x80000001,
+    0x80000001,  # s=32 represented by sh1=1, sh2=31.
     0xFFFFFFFE,
-    0xFFFFFFFF,
+    0xFFFFFFFF,  # Maximum uint32 divisor.
 )
 
 UNSIGNED_BASE_VALUES = (
@@ -83,6 +84,7 @@ UNSIGNED_BASE_VALUES = (
     2,
     0x7FFFFFFF,
     0x80000000,
+    # High dividends exercise the carry cases from the old wrapped-add path.
     0x82400000,
     0xFFFFFFFE,
     0xFFFFFFFF,
@@ -123,36 +125,32 @@ def unsigned_values(divisor):
     return tuple(sorted(values))
 
 
-@triton.jit
-def simt_div_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+@triton.jit(do_not_specialize=["divisor"])
+def simt_div_kernel(x_ptr, output_ptr, divisor: tl.int32):
     pid = tl.program_id(0)
     x = tl.load(x_ptr + pid)
-    divisor = tl.full((), DIVISOR, tl.int32)
     tl.store(output_ptr + pid, x // divisor)
 
 
-@triton.jit
-def simt_mod_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+@triton.jit(do_not_specialize=["divisor"])
+def simt_mod_kernel(x_ptr, output_ptr, divisor: tl.int32):
     pid = tl.program_id(0)
     x = tl.load(x_ptr + pid)
-    divisor = tl.full((), DIVISOR, tl.int32)
     tl.store(output_ptr + pid, x % divisor)
 
 
-@triton.jit
-def simt_udiv_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+@triton.jit(do_not_specialize=["divisor"])
+def simt_udiv_kernel(x_ptr, output_ptr, divisor: tl.uint32):
     pid = tl.program_id(0)
     x = tl.load(x_ptr + pid).to(tl.uint32)
-    divisor = tl.full((), DIVISOR, tl.uint32)
     result = x // divisor
     tl.store(output_ptr + pid, result.to(tl.int32))
 
 
-@triton.jit
-def simt_umod_kernel(x_ptr, output_ptr, DIVISOR: tl.constexpr):
+@triton.jit(do_not_specialize=["divisor"])
+def simt_umod_kernel(x_ptr, output_ptr, divisor: tl.uint32):
     pid = tl.program_id(0)
     x = tl.load(x_ptr + pid).to(tl.uint32)
-    divisor = tl.full((), DIVISOR, tl.uint32)
     result = x % divisor
     tl.store(output_ptr + pid, result.to(tl.int32))
 
