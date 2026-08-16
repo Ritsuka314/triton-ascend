@@ -320,6 +320,9 @@ def _run_ttir_to_npubin(
         commands.append(list(command))
         output = Path(command[command.index("-o") + 1] + ".o")
         output.write_bytes(b"npubin")
+        metadata_option = next((arg for arg in command if arg.startswith("--triton-metadata-output=")), None)
+        if metadata_option is not None:
+            Path(metadata_option.split("=", 1)[1]).write_text("{}")
         return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     monkeypatch.setattr(
@@ -366,6 +369,16 @@ def _run_ttir_to_npubin(
     assert result == b"npubin"
     assert len(commands) == 1
     return events, commands[0]
+
+
+@pytest.mark.parametrize("force_simt_only", (False, True))
+def test_ttir_to_npubin_global_scratch_allocation_flag(compiler_module, monkeypatch, force_simt_only):
+    _events, command = _run_ttir_to_npubin(
+        compiler_module,
+        monkeypatch,
+        force_simt_only=force_simt_only,
+    )
+    assert ("--enable-global-scratch-allocation" in command) is force_simt_only
 
 
 @pytest.mark.skip(reason="The case is not supported on A5, skipping for now. Will be fixed in future.")
@@ -594,6 +607,7 @@ def test_ttir_to_npubin_auto_blockify_argv_matrix(compiler_module, monkeypatch):
         "--enable-hivm-compile=false",
         "--enable-triton-ir-compile",
         "--pure-simt",
+        "--enable-global-scratch-allocation",
         "--num-warps=4",
         "--threads-per-warp=32",
         "--enable-bishengir-simt-optimization=17",
@@ -644,7 +658,12 @@ def test_ttir_to_npubin_auto_blockify_argv_matrix(compiler_module, monkeypatch):
                 f"R={row_applied}, superblock={superblock}, "
                 f"bisheng_options={case_bisheng_options!r}")
 
-        expected_options = [*common_options, *pure_simt_prefix]
+        metadata_options = [arg for arg in command if arg.startswith("--triton-metadata-output=")]
+        assert len(metadata_options) == 1, case
+        metadata_option = metadata_options[0]
+        assert Path(metadata_option.split("=", 1)[1]).name == "triton-metadata.json", case
+
+        expected_options = [*common_options, metadata_option, *pure_simt_prefix]
         if first_injection:
             expected_options.append(auto_blockify_flag)
         if case_bisheng_options is not None:
