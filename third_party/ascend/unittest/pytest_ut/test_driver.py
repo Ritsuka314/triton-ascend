@@ -23,6 +23,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+pytestmark = pytest.mark.backend("none")
+
 _MOCK_AICORE_NUM = 24
 _MOCK_AIVECTOR_NUM = _MOCK_AICORE_NUM * 2
 
@@ -42,6 +44,7 @@ def _make_mock_npu_utils():
     # _get_npu_device_limit_form_env calls self.get_device_aicore(); configure it
     # to return a fixed int instead of binding the real lru_cached method.
     mock.get_device_core.return_value = _MOCK_AICORE_NUM, _MOCK_AIVECTOR_NUM
+    mock.get_arch.return_value = "Ascend910_9392"
     # Bind real methods (not lru_cached) so the actual parsing/property logic runs.
     mock._get_npu_device_limit_form_env = types.MethodType(NPUUtils._get_npu_device_limit_form_env, mock)
     mock.get_device_properties = types.MethodType(NPUUtils.get_device_properties, mock)
@@ -118,7 +121,24 @@ def test_npu_device_limit_get_device_properties(monkeypatch):
     props = NPUUtils.get_device_properties(mock_utils, "npu")
     assert props["num_aicore"] == 8
     assert props["num_vectorcore"] == 16
-    assert props["max_shared_mem"] == 1
+
+
+@pytest.mark.parametrize(
+    "arch,expected_max_shared_mem",
+    [
+        ("Ascend910_9392", 192 * 1024),
+        ("Ascend910_9589", 248 * 1024),
+        ("Ascend950A3", 248 * 1024),
+    ],
+)
+def test_get_device_properties_reports_usable_shared_memory(monkeypatch, arch, expected_max_shared_mem):
+    mock_utils, NPUUtils = _make_mock_npu_utils()
+    mock_utils.get_arch.return_value = arch
+    monkeypatch.delenv("NPU_DEVICE_LIMIT", raising=False)
+
+    props = NPUUtils.get_device_properties(mock_utils, "npu")
+
+    assert props["max_shared_mem"] == expected_max_shared_mem
 
 
 def test_npu_device_limit_default_when_unset(monkeypatch):

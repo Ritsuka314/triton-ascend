@@ -75,6 +75,20 @@ class _LazyBackendStrategyRegister:
 backend_strategy_registry = _LazyBackendStrategyRegister()
 
 
+class _ScratchBuffer:
+
+    def __init__(self, tensor, alignment):
+        self.tensor = tensor
+        get_data_ptr = getattr(tensor, "data_ptr", None)
+        if get_data_ptr is None:
+            get_data_ptr = tensor._data_ptr
+        address = get_data_ptr()
+        self._aligned_data_ptr = ((address + alignment - 1) // alignment) * alignment
+
+    def data_ptr(self):
+        return self._aligned_data_ptr
+
+
 @backend_strategy_registry.register("mindspore", "version_hash")
 def version_hash():
     import mindspore
@@ -161,6 +175,22 @@ def get_empty_tensor(size):
 def get_empty_tensor(size):
     import torch
     return torch.empty(size, dtype=torch.int32, device='npu')
+
+
+@backend_strategy_registry.register("mindspore", "allocate_global_scratch")
+def allocate_mindspore_global_scratch(size, alignment, stream):
+    import mindspore
+    alignment = max(int(alignment), 1)
+    tensor = mindspore.mint.empty(size + alignment - 1, dtype=mindspore.uint8)
+    return _ScratchBuffer(tensor, alignment)
+
+
+@backend_strategy_registry.register("torch_npu", "allocate_global_scratch")
+def allocate_torch_global_scratch(size, alignment, stream):
+    import torch
+    alignment = max(int(alignment), 1)
+    tensor = torch.empty(size + alignment - 1, dtype=torch.uint8, device='npu')
+    return _ScratchBuffer(tensor, alignment)
 
 
 @backend_strategy_registry.register("mindspore", "get_cc_cmd")

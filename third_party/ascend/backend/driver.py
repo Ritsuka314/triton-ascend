@@ -148,10 +148,12 @@ class NPUUtils(object):
             return False
 
     def get_device_properties(self, device):
-        # temperoarily added "max_shared_mem" properties to avoid triton-compiler complain
-        # fetch available memory at runtime
+        arch = self.get_arch()
+        # A5 exposes 248 KiB usable UB (256 KiB physical, 8 KiB reserved);
+        # A2/A3 expose 192 KiB.
+        max_shared_mem = (248 if arch.startswith(("Ascend910_95", "Ascend950")) else 192) * 1024
         num_aic, num_aiv = self._get_npu_device_limit_form_env()
-        return {"max_shared_mem": 1, "num_aicore": num_aic, "num_vectorcore": num_aiv}
+        return {"max_shared_mem": max_shared_mem, "num_aicore": num_aic, "num_vectorcore": num_aiv}
 
     def get_arch(self):
         # temporarily return empty arch descriptor
@@ -210,7 +212,11 @@ class NPULauncher(object):
             grid_size = gridX * gridY * gridZ
             alloc_size = grid_size * self.global_scratch_size
             alloc_fn = _allocation._allocator.get()
-            global_scratch = alloc_fn(alloc_size, self.global_scratch_align, stream)
+            if isinstance(alloc_fn, _allocation.NullAllocator):
+                global_scratch = get_backend_func("allocate_global_scratch", alloc_size, self.global_scratch_align,
+                                                  stream)
+            else:
+                global_scratch = alloc_fn(alloc_size, self.global_scratch_align, stream)
 
         profiler_registered = self.launch(gridX, gridY, gridZ, stream, function, global_scratch, None, packed_metadata,
                                           launch_metadata, launch_enter_hook, launch_exit_hook, *kernel_args, **kwargs)
@@ -523,6 +529,18 @@ static inline DevicePtrInfo getPointer(PyObject* obj, int idx) {
   PyErr_SetString(PyExc_TypeError, "Pointer argument must be either uint64 or have data_ptr method");
   ptr_info.valid = false;
   return ptr_info;
+}
+
+static std::shared_ptr<PyObject> retain_python_object(PyObject* obj) {
+  if (!obj || obj == Py_None) {
+    return {};
+  }
+  Py_INCREF(obj);
+  return std::shared_ptr<PyObject>(obj, [](PyObject* value) {
+    PyGILState_STATE state = PyGILState_Ensure();
+    Py_DECREF(value);
+    PyGILState_Release(state);
+  });
 }
 """
 
@@ -1263,14 +1281,20 @@ void triton_launch_kernel(const char* kernelName, aclrtFuncHandle func, aclrtStr
 static void _launch(const char* kernelName, aclrtFuncHandle func, aclrtStream stream,
     int gridX, int gridY, int gridZ,
     std::vector<std::vector<int64_t>> &tensorShapes, std::vector<int> &tensorKinds,
-    void *global_scratch, void *profile_scratch{(', ' + arg_decls) if len(arg_decls) > 0 else ''}) {{
+    void *global_scratch, void *profile_scratch,
+    PyObject *global_scratch_owner, PyObject *profile_scratch_owner
+    {(', ' + arg_decls) if len(arg_decls) > 0 else ''}) {{
   // Keep Python launcher on the stable local packing path.
   if (gridX <=0 || gridY <=0 || gridZ <=0) {{
     printf("WARNING: Skipping launch for kernel '%s' due to empty grid (gridX=%d, gridY=%d, gridZ=%d).\\n", kernelName, gridX, gridY, gridZ);
     return;
   }}
+  auto global_scratch_owner_guard = retain_python_object(global_scratch_owner);
+  auto profile_scratch_owner_guard = retain_python_object(profile_scratch_owner);
 {_launch_preamble}
 {_launch_lambda_pre}
+    (void)global_scratch_owner_guard;
+    (void)profile_scratch_owner_guard;
     struct __attribute__((packed)) {{
       {'void* ffts_addr __attribute__((aligned(8)));' if target_support_ffts else ''}
       {'void* syncBlockLock __attribute__((aligned(8)));' if not metadata.is_pure_simt else ''}
@@ -1392,7 +1416,8 @@ static PyObject* launch(PyObject* self, PyObject* const* args, Py_ssize_t nargs)
   _launch(kernelName, function, stream,
           gridX, gridY, gridZ,
           tensorShapes, tensorKinds,
-          global_scratch, profile_scratch
+          global_scratch, profile_scratch,
+          global_scratch_obj, profile_scratch_obj
           {', ' + ', '.join(internal_args_list) if len(internal_args_list) > 0 else ''});
   if (PyErr_Occurred()) {{
     return nullptr;

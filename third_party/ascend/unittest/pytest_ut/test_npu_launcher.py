@@ -19,21 +19,25 @@
 # THE SOFTWARE.
 
 import importlib.util
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
+import triton
 
-def _load_driver_module():
-    driver_path = Path(__file__).resolve().parents[2] / "backend" / "driver.py"
-    spec = importlib.util.spec_from_file_location("ascend_driver_under_test", driver_path)
+
+def _load_backend_module(name):
+    module_path = Path(__file__).resolve().parents[2] / "backend" / f"{name}.py"
+    spec = importlib.util.spec_from_file_location(f"ascend_{name}_under_test", module_path)
     module = importlib.util.module_from_spec(spec)
     assert spec.loader is not None
     spec.loader.exec_module(module)
     return module
 
 
-driver = _load_driver_module()
+backend_register = _load_backend_module("backend_register")
+driver = _load_backend_module("driver")
 
 
 def _make_launcher(monkeypatch, global_scratch_size, global_scratch_align, launch):
@@ -99,33 +103,65 @@ def _assert_order(text, *items):
     assert offsets == sorted(offsets)
 
 
-def test_npu_launcher_allocates_global_scratch(monkeypatch):
+def _assert_scratch_forwarded(launch, expected):
+    launch.assert_called_once()
+    _, _, _, _, _, global_scratch, profile_scratch, *_ = launch.call_args.args
+    assert global_scratch is expected
+    assert profile_scratch is None
+
+
+def test_npu_launcher_uses_framework_allocator_when_unset(monkeypatch):
     buffer = object()
-    allocate = Mock(return_value=buffer)
-    allocator = Mock()
-    allocator.get.return_value = allocate
-    monkeypatch.setattr(driver._allocation, "_allocator", allocator)
+    allocation_requests = []
+
+    def allocate_from_framework(name, *args):
+        allocation_requests.append((name, *args))
+        return buffer
+
+    monkeypatch.setattr(driver, "get_backend_func", allocate_from_framework)
+    token = driver._allocation._allocator.set(driver._allocation.NullAllocator())
     launch = Mock(return_value=0)
-    launcher = _make_launcher(monkeypatch, global_scratch_size=64, global_scratch_align=16, launch=launch)
     packed_metadata = {"hash": "h"}
 
-    launcher(2, 3, 4, 99, 123, packed_metadata, None, None, None, "kernel-arg")
+    try:
+        launcher = _make_launcher(monkeypatch, global_scratch_size=64, global_scratch_align=16, launch=launch)
+        launcher(2, 3, 4, 99, 123, packed_metadata, None, None, None, "kernel-arg")
+    finally:
+        driver._allocation._allocator.reset(token)
+
+    assert allocation_requests == [("allocate_global_scratch", 1536, 16, 99)]
+    _assert_scratch_forwarded(launch, buffer)
+
+
+def test_npu_launcher_prefers_explicit_allocator(monkeypatch):
+    buffer = object()
+    allocate = Mock(return_value=buffer)
+    monkeypatch.setattr(driver, "get_backend_func", Mock(side_effect=AssertionError("framework fallback used")))
+    previous_allocator = driver._allocation._allocator.get()
+    triton.set_allocator(allocate)
+    launch = Mock(return_value=0)
+    packed_metadata = {"hash": "h"}
+
+    try:
+        launcher = _make_launcher(monkeypatch, global_scratch_size=64, global_scratch_align=16, launch=launch)
+        launcher(2, 3, 4, 99, 123, packed_metadata, None, None, None, "kernel-arg")
+    finally:
+        triton.set_allocator(previous_allocator)
 
     allocate.assert_called_once_with(1536, 16, 99)
-    launch.assert_called_once_with(
-        2,
-        3,
-        4,
-        99,
-        123,
-        buffer,
-        None,
-        packed_metadata,
-        None,
-        None,
-        None,
-        "kernel-arg",
-    )
+    _assert_scratch_forwarded(launch, buffer)
+
+
+def test_mindspore_framework_allocator_returns_launcher_buffer(monkeypatch):
+    tensor = SimpleNamespace(_data_ptr=Mock(return_value=123))
+    empty = Mock(return_value=tensor)
+    uint8 = object()
+    monkeypatch.setitem(sys.modules, "mindspore", SimpleNamespace(mint=SimpleNamespace(empty=empty), uint8=uint8))
+
+    buffer = backend_register.backend_strategy_registry.execute_func("mindspore", "allocate_global_scratch", 64, 16, 99)
+
+    empty.assert_called_once_with(79, dtype=uint8)
+    assert buffer.data_ptr() == 128
 
 
 def test_npu_launcher_skips_zero_sized_global_scratch(monkeypatch):
@@ -194,6 +230,21 @@ def test_make_launcher_threads_scratch_through_pure_simt_abi(monkeypatch):
 
     exported = _exported_launcher_source(src)
     _assert_order(exported, "global_scratch_offset", "profile_scratch_offset", "dtdata_offset")
+
+
+def test_make_launcher_retains_scratch_while_async_launch_is_queued(monkeypatch):
+    monkeypatch.setenv("TRITON_ENABLE_TASKQUEUE", "true")
+    src = _make_launcher_source(monkeypatch, is_pure_simt=True)
+
+    assert "static std::shared_ptr<PyObject> retain_python_object" in src
+    internal = src[src.index("static void _launch("):]
+    assert "global_scratch_owner_guard = retain_python_object(global_scratch_owner)" in internal
+    callback = internal[internal.index("std::function<aclError()> launch_call"):]
+    _assert_order(callback, "(void)global_scratch_owner_guard;", "struct __attribute__((packed))")
+
+    call_start = src.index("_launch(kernelName")
+    call = src[call_start:src.index(");", call_start)]
+    _assert_order(call, "global_scratch", "profile_scratch", "global_scratch_obj", "profile_scratch_obj")
 
 
 def test_make_launcher_omits_scratch_from_non_simt_device_layout(monkeypatch):
